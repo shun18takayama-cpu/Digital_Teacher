@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from sympy import Basic, E, cos, exp, log, sin, srepr, simplify
+from sympy import Basic, E, cos, exp, log, sin, srepr, simplify, symbols
 from sympy.abc import x
 from sympy.parsing.sympy_parser import (
     implicit_multiplication_application,

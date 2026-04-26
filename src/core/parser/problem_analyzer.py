@@ -144,12 +144,10 @@ def analyze_recursive(expr, rules):
             if isinstance(arg, Basic):
                  analyze_recursive(arg, rules)
 
-# -----------------------------------------------------------------------------
-# STEP 2: analyze_expression_rules 関数
-# -----------------------------------------------------------------------------
-def analyze_expression_rules(expr_str):
+def analyze_expression(expr_str):
     """
     数式の文字列を受け取り、分析して「ルールのリスト」と「ASTの文字列」を返す。
+    （主に問題マスターのタグ付けや、人間の確認用）
     """
     x = symbols('x')
     local_functions = {"sin": sin, "cos": cos, "tan": tan, "exp": exp, "log": log, "ln": log, "sqrt": sqrt}
@@ -185,4 +183,43 @@ def analyze_expression_rules(expr_str):
     except Exception as analysis_error:
        return ["分析エラー"], f"Error during analysis: {type(analysis_error).__name__}"
 
-    return sorted(list(detected_rules)), ast_representation
+    return list(detected_rules), ast_representation
+
+
+# =============================================================================
+# STEP 2: 展開エンジン用パーサー（★今回追加する新機能）
+# =============================================================================
+def safe_parse(expr_str):
+    """
+    文字列を安全な前処理に通し、SymPyの「操作可能なオブジェクト(AST)」として返す。
+    自動計算を防ぐため evaluate=False を適用する。
+    生徒の未熟な式変形（x*xなど）をそのままの構造で維持するための必須関数。
+    """
+    x = symbols('x')
+    local_functions = {"sin": sin, "cos": cos, "tan": tan, "exp": exp, "log": log, "ln": log, "sqrt": sqrt}
+    
+    try:
+        if not isinstance(expr_str, str):
+             raise TypeError("Input must be a string")
+        
+        # 既存コードと同じ、実績のある強固な前処理
+        processed_str = expr_str.strip()
+        processed_str = processed_str.replace('^', '**')
+        processed_str = processed_str.translate(str.maketrans({chr(0xFF01 + i): chr(0x21 + i) for i in range(94)}))
+
+        transformations = (standard_transformations + (implicit_multiplication_application,))
+        
+        # ★ evaluate=False を指定してパース（勝手に計算させない！）
+        parsed_expression = parse_expr(
+            processed_str, 
+            local_dict=local_functions, 
+            transformations=transformations, 
+            evaluate=False  
+        )
+        
+        # 文字列ではなく、SymPyオブジェクトそのものを返す
+        return parsed_expression
+
+    except Exception as e:
+        print(f"[safe_parse Error] 文字列のパースに失敗しました: '{expr_str}' -> {type(e).__name__}: {e}")
+        return None
