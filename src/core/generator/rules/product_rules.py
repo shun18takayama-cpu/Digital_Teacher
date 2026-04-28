@@ -1,91 +1,64 @@
-import sys
-import os
-import sympy as sp
-from sympy import Symbol, Derivative, Mul, Add, srepr
+from sympy import Mul, Add, Derivative, factor
+from src.core.parser.expression_parser import safe_parse
 
-# =============================================================================
-# ★ パス解決（Import地獄の回避）
-# =============================================================================
-# 現在のファイル(product_rule.py)から見て、5階層上のディレクトリ(Digital_Teacher)
-# をPythonの世界の中心（ルート）として強制認識させます。
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-if BASE_DIR not in sys.path:
-    sys.path.append(BASE_DIR)
-
-# 新しいアーキテクチャのパスで、safe_parseを読み込む
-from src.core.parser.problem_analyzer import safe_parse
-
-# =============================================================================
-# コアロジック: 積の微分エンジン
-# =============================================================================
 def apply_product_rule(expr, x):
     """
-    Module 2a: 積の微分 (Mul) の展開パターンを自動生成するエンジン
-    入力された expr (Mulオブジェクト) を解体してパターンを作る。
+    積の微分ルール (fg)' = f'g + fg' に基づき、複数の展開パターンを生成する。
+    【全方位拡張版】因数分解時の「順序違い」を徹底的に網羅。
     """
-    # 簡略化のため、今回は2つの項 (f * g) の掛け算のみに対応
-    if len(expr.args) != 2:
-        return {"Error": "現在は2つの項の積にのみ対応しています"}
-
-    # expr.args から自動で中身を取り出す
-    f, g = expr.args
-    
     templates = {}
-
-    # 1. 公式適用直後 (未計算) : f'*g + f*g'
-    term1_uncalc = Mul(Derivative(f, x), g, evaluate=False)
-    term2_uncalc = Mul(f, Derivative(g, x), evaluate=False)
-    pat1 = Add(term1_uncalc, term2_uncalc, evaluate=False)
-    templates['Pattern_1_積の微分適用直後'] = pat1
-
-    # 2a. fのみ計算 : e^xの微分だけやった状態
-    term1_calc = Mul(f.diff(x), g, evaluate=False) 
-    pat2a = Add(term1_calc, term2_uncalc, evaluate=False)
-    templates['Pattern_2a_左側のみ計算'] = pat2a
-
-    # 2b. gのみ計算 : log(x)の微分だけやった状態
-    term2_calc = Mul(f, g.diff(x), evaluate=False) 
-    pat2b = Add(term1_uncalc, term2_calc, evaluate=False)
-    templates['Pattern_2b_右側のみ計算'] = pat2b
-
-    # 3. 両方計算 (未整理)
-    pat3 = Add(term1_calc, term2_calc, evaluate=False)
-    templates['Pattern_3_両方の微分完了_未整理'] = pat3
-
-    # 4. 最終形態（簡略化）
-    templates['Pattern_4_最終_展開型'] = sp.expand(pat3)
     
+    if not isinstance(expr, Mul) or len(expr.args) < 2:
+        templates["Pattern_0_Base"] = expr
+        return templates
+
+    f = expr.args[0]
+    g = Mul(*expr.args[1:], evaluate=False)
+
+    df_unresolved = Derivative(f, x)
+    dg_unresolved = Derivative(g, x)
+    df_eval = f.diff(x)
+    dg_eval = g.diff(x)
+
+    # -------------------------------------------------------------------------
+    # Pattern 1 & 1.5 & 2: 途中式パターン（変更なし）
+    # -------------------------------------------------------------------------
+    templates["Pattern_1_積の微分適用直後"] = safe_parse(str(Add(Mul(df_unresolved, g, evaluate=False), Mul(f, dg_unresolved, evaluate=False), evaluate=False)))
+    templates["Pattern_1.5a_前項のみ微分完了"] = safe_parse(str(Add(Mul(df_eval, g, evaluate=False), Mul(f, dg_unresolved, evaluate=False), evaluate=False)))
+    templates["Pattern_1.5b_後項のみ微分完了"] = safe_parse(str(Add(Mul(df_unresolved, g, evaluate=False), Mul(f, dg_eval, evaluate=False), evaluate=False)))
+    templates["Pattern_2_両方の微分実行完了"] = safe_parse(str(Add(Mul(df_eval, g, evaluate=False), Mul(f, dg_eval, evaluate=False), evaluate=False)))
+
+    # -------------------------------------------------------------------------
+    # Pattern 3: SymPyによる完全自動整理
+    # -------------------------------------------------------------------------
+    pattern_3 = expr.diff(x)
+    templates["Pattern_3_最終展開形"] = safe_parse(str(pattern_3))
+
+    # -------------------------------------------------------------------------
+    # Pattern 4: 共通因数でのくくり出し（バリエーション徹底網羅）
+    # -------------------------------------------------------------------------
+    pattern_4_base = factor(pattern_3)
+    templates["Pattern_4a_因数分解_標準"] = safe_parse(str(pattern_4_base))
+
+    # factorの結果が「A * (B + C)」のような形（Mulで要素が2つ）の場合、順序を入れ替える
+    if isinstance(pattern_4_base, Mul) and len(pattern_4_base.args) == 2:
+        arg1, arg2 = pattern_4_base.args
+        
+        # 4b: 因数を後ろに配置 -> (B + C) * A
+        pattern_4b = Mul(arg2, arg1, evaluate=False)
+        templates["Pattern_4b_因数分解_因数後置"] = safe_parse(str(pattern_4b))
+        
+        # カッコの中身が足し算（Addで要素が2つ）の場合、さらにその中身も入れ替える
+        if isinstance(arg2, Add) and len(arg2.args) == 2:
+            inner1, inner2 = arg2.args
+            reversed_add = Add(inner2, inner1, evaluate=False)
+            
+            # 4c: カッコの中身を逆順 + 因数前置 -> A * (C + B)
+            pattern_4c = Mul(arg1, reversed_add, evaluate=False)
+            templates["Pattern_4c_因数分解_項逆順_前"] = safe_parse(str(pattern_4c))
+            
+            # 4d: カッコの中身を逆順 + 因数後置 -> (C + B) * A
+            pattern_4d = Mul(reversed_add, arg1, evaluate=False)
+            templates["Pattern_4d_因数分解_項逆順_後"] = safe_parse(str(pattern_4d))
+
     return templates
-
-# =============================================================================
-# 動作テスト用メイン処理
-# =============================================================================
-def main():
-    x = Symbol('x')
-    
-    # テストする数式（HW03-01）
-    expr_str = "exp(x) * log(x)"
-    print(f"--- 積の微分エンジン テスト開始 ---\n入力文字列: {expr_str}\n")
-    
-    # Module 1: パース
-    parsed_expr = safe_parse(expr_str)
-    
-    if parsed_expr is None:
-        print("パースに失敗しました。")
-        return
-
-    # Module 2: ルール判定と実行
-    if parsed_expr.func == Mul:
-        print("➡️ 一番外側の構造が『Mul (積)』であることを検知しました！\n➡️ 積の微分エンジン (apply_product_rule) を起動します。\n")
-        
-        patterns = apply_product_rule(parsed_expr, x)
-        
-        for name, expr_obj in patterns.items():
-            print(f"■ {name}")
-            print(f"  数式表示: {expr_obj}")
-            print(f"  AST詳細 : {srepr(expr_obj)}\n")
-    else:
-        print(f"Mulではありません。（{parsed_expr.func}です）")
-
-if __name__ == "__main__":
-    main()
